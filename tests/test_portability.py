@@ -29,6 +29,7 @@ class PortabilityTests(unittest.TestCase):
                 self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
             run('export_pdf.py', '--help')
+            run('export_pdf_job.py', '--help')
 
             package = work / 'source'
             package.mkdir()

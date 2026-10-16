@@ -91,6 +91,21 @@ Hancom may still be rendering and inspect its state before retrying with a longe
 limit. A timeout does not by itself prove export failure or a dialog. The exporter
 stops its Python worker without killing other Hancom processes.
 
+For a user who will return later to approve Hancom, use the detached job helper:
+
+```text
+python <skill-dir>/scripts/export_pdf_job.py start input.hwpx output.pdf export-job
+python <skill-dir>/scripts/export_pdf_job.py status export-job
+```
+
+The job runs independently with a 24-hour timeout. The launcher checks for up
+to 30 seconds, then returns even if export is still pending (`--timeout` and
+`--wait` adjust these limits). Keep the job directory path in your response and
+end the turn if waiting for the user; do not continue polling indefinitely.
+When the user reports approval, check that same job and verify its PDF instead
+of launching another export. A pending status is not successful conversion.
+Read the export guide for persisted status, logs, and interruption limitations.
+
 ## Verify appearance when required
 
 Content preservation and demonstrated visual equivalence are different checks.
