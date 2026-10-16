@@ -72,17 +72,25 @@ Hancom web/server APIs. Read [the export guide](references/hancom-pdf.md) for
 prerequisites, file-access approvals, and recovery from blocked exports.
 
 ```text
-python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf
+python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --report export.json
 ```
 
 The exporter creates its own COM object, opens the document, calls PDF SaveAs,
 and closes that session. It requires a new output path, stages the PDF before
-publishing, checks the input hash, and enforces a 300-second timeout (adjust with
-`--timeout SECONDS` for large documents). It verifies the PDF signature/end
+publishing atomically without overwriting, checks the input hash, and supervises
+preparation, rendering, validation, publication, and cleanup under one 300-second
+deadline (adjust with `--timeout SECONDS`). It verifies the PDF signature/end
 marker; use the comparison helper for page rendering verification. It does not
 change document content or install/configure a security module. Stage messages,
 elapsed time, and staged PDF size appear on stderr; the result JSON uses stdout.
+Optional `--report` saves success or failure diagnostics to a new JSON path,
+including the execution account/session, last stage, paths, and available hashes.
+Report writing has a separate five-second limit; failures remain visible on stdout.
+See the export guide for timeout cleanup limits and output recovery.
 
+If no window appears, check the recorded execution account and output-directory
+access before assuming a consent dialog. A sandbox account may not share the
+user's visible desktop, and a folder created by another account may be inaccessible.
 An approval dialog can require the user's action. Do not click through security
 prompts or retry indefinitely. A preconfigured, trusted Hancom module can be
 selected explicitly with `--security-module NAME`; never register arbitrary
@@ -139,7 +147,8 @@ python -m unittest discover -s <skill-dir>/tests -t <skill-dir> -v
 ```
 
 Tests use synthetic fixtures and temporary directories. Export tests mock
-Hancom and exercise worker supervision with Python subprocesses; they do not
+Hancom and exercise blocked preparation, rendering, publication, cleanup, report
+writing, and Korean paths using supervised Python subprocesses; they do not
 launch desktop apps. PDF comparison tests require PyMuPDF and
 are skipped when it is unavailable; core archive and XML tests have no
 third-party dependencies. No installation or document-specific authoring

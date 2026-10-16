@@ -10,22 +10,61 @@ Install pywin32 in the Python environment running the script if it is absent:
 
 ```text
 python -m pip install pywin32
-python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --timeout 300
+python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --timeout 300 --report export.json
 ```
 
 The input must be a valid HWPX ZIP package. Output must be a new `.pdf` path.
-Successful export prints JSON containing renderer version, source/output hashes,
-byte count, and preservation checks. Exit 0 means export completed; exit 2 means
-an error. Export success alone does not establish visual equivalence.
+Export prints a JSON result on success or failure. Optional `--report` persists
+the same result to a new file, refusing to replace an existing file or either
+document. Reports include `state`, `last_stage`, elapsed time, the worker account,
+Windows session ID and PID, input/output and staging paths, and hashes and
+preservation checks when available. A failure before hashing leaves hashes null;
+it does not imply a preservation check passed. `failed_stage` retains the original
+failure location when cleanup subsequently changes `last_stage`.
 
-The default limit is 300 seconds for the entire worker, including opening,
-rendering, and closing. Waiting for file-access consent also uses this time.
+Exit 0 means export and any requested report completed; exit 2 means an error.
+If report persistence fails, stdout retains the export result with `report_error`;
+a successful PDF can therefore accompany exit 2. Export success alone does not
+establish visual equivalence. Store reports somewhere writable by the execution
+account. No persistent report can be guaranteed if that path is inaccessible.
+
+The default limit is 300 seconds for the entire export worker, including archive
+validation, input hashing, directory preparation, opening, rendering, closing,
+PDF validation, publication, and staging cleanup. Waiting for file-access consent
+also uses this time. The supervisor does not poll the filesystem: size telemetry
+runs inside the worker, so a blocked file operation cannot suspend the deadline.
+After timeout it stops only its Python worker and allows up to two seconds for
+process reaping. It does not wait indefinitely on inherited pipe handles or kill
+Hancom. Report persistence uses another supervised process with a separate
+five-second deadline, including report-directory preparation and cleanup.
 Large documents can take more than 45 seconds even when
 export is working. Progress goes to stderr: the current stage and, every 15
-seconds while waiting, elapsed time and the staged PDF size. A growing file is
+seconds while waiting, elapsed time and the last stage. Staged PDF size is also
+reported while available. A growing file is
 evidence of progress; no growth alone does not prove the app is blocked. JSON
 on stdout remains machine-readable and includes total elapsed time. Increase
 `--timeout` for slower machines or larger documents.
+
+## Account and directory checks
+
+If no Hancom window appears or export stalls before rendering, inspect the
+reported account, session ID, and last stage first. A COM window marked visible
+belongs to the account/desktop that launched it; this does not establish that the
+interactive user can see it. A shared Windows session ID alone does not prove
+that the accounts share a visible desktop.
+
+Check input readability and the ability to create a staging directory under the
+chosen output parent using the same execution account as Hancom. Temporary
+folders created under a sandbox account may not be usable by the desktop account.
+When permitted, use the desktop account and a new output path in its accessible
+workspace. Exporting beside the input is one option if that directory is writable.
+Do not change ACLs, security settings, or Hancom security modules to force access.
+
+An `Opening HWPX document` stage with no output is not proof of an approval
+dialog. Ask the user to handle a prompt when it is observed or they report it;
+if there is no visible prompt, diagnose account, desktop, and path access instead.
+Inspect the existing attempt before retrying. Do not launch repeated exports
+or increase timeouts without evidence that the next attempt addresses the cause.
 
 ## File-access approvals
 
@@ -97,14 +136,21 @@ perform module installation as part of an ordinary export request.
   the last stage and staging path. A locked staging directory may remain.
   Do not terminate unrelated Hancom processes. Inspect the app's state and
   allow an ongoing export to finish before retrying with a longer limit.
-- A failed export does not publish a final PDF. Handled copy failures remove the
-  newly created partial output. A force-killed process or power loss can still
-  leave temporary/partial files; inspect them before reusing an output path.
+- Only a validated staged PDF is published, using an atomic operation that
+  refuses an existing destination. A timeout during publication or cleanup can
+  leave a complete PDF or staging files. Check `output_published` when present
+  and inspect the output before retrying; absence of that field does not prove
+  publication did not happen. A failed result never certifies a usable PDF.
 - Source hashes are checked before publishing. The PDF header and EOF marker
   are checked; detailed page validation uses `scripts/compare_pdf.py` and PyMuPDF.
 - For regression checks, compare automated output with a manual export from the
   same Hancom version and settings. Record the observed result rather than
   promising every document will have identical layout under all versions.
+
+Detached jobs retain the export's structured failure diagnostics in `status.json`
+under `result`. Their launcher still prepares job metadata before starting the
+export deadline; use an accessible job directory. The end-to-end deadline applies
+to the export worker, not the launcher's own directory setup or status reads.
 
 Hancom references: [automation setup](https://developer.hancom.com/en-us/hwpautomation)
 and [PDF SaveAs example](https://forum.developer.hancom.com/t/insertpicture-hwp-pdf/2247).
