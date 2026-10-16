@@ -6,10 +6,27 @@ description: Pack and unpack HWPX documents, indent their XML without changing d
 # HWPX
 
 Use the bundled Python tools for package operations and conservative XML source
-formatting. Resolve script paths relative to this skill; input and output paths
-belong to the user's workspace. No repository-specific files are required.
+formatting. Resolve script paths relative to this skill and use the requested
+destinations for document inputs and outputs. No repository-specific files are required.
 Python 3.10+ is sufficient for packing and XML formatting. Local PDF export
 requires Windows, desktop Hancom, and pywin32; PDF comparison requires PyMuPDF.
+
+## Temporary JSON reports
+
+Put routine formatting, PDF export, and PDF comparison JSON reports in a unique
+directory under the operating system's temporary area. Create it with the same
+execution account that will write the reports, for example in PowerShell:
+
+```powershell
+$hwpxReports = python -c "import tempfile; print(tempfile.mkdtemp(prefix='hwpx-reports-'))"
+```
+
+`<report-dir>` in the examples below means that directory. Pass the full JSON
+path with `--report`; the scripts use the supplied path, not an automatic temp
+location. Use a workspace path only when the user or project workflow requires
+retained evidence. Keep requested deliverables at their chosen destinations.
+Temporary reports must remain outside HWPX packages. Keep pending detached-job
+metadata until the job finishes and its result has been checked.
 
 ## Pack and unpack
 
@@ -35,8 +52,8 @@ python <skill-dir>/scripts/hwpx_archive.py pack package-directory output.hwpx
 ## Format XML without changing content
 
 ```text
-python <skill-dir>/scripts/format_hwpx_xml.py package-directory --check --report check.json
-python <skill-dir>/scripts/format_hwpx_xml.py package-directory --report result.json
+python <skill-dir>/scripts/format_hwpx_xml.py package-directory --check --report "<report-dir>/check.json"
+python <skill-dir>/scripts/format_hwpx_xml.py package-directory --report "<report-dir>/result.json"
 ```
 
 Run the preview first and inspect its changed-file list and validation results.
@@ -72,7 +89,7 @@ Hancom web/server APIs. Read [the export guide](references/hancom-pdf.md) for
 prerequisites, file-access approvals, and recovery from blocked exports.
 
 ```text
-python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --report export.json
+python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --report "<report-dir>/export.json"
 ```
 
 The exporter creates its own COM object, opens the document, calls PDF SaveAs,
@@ -102,8 +119,8 @@ stops its Python worker without killing other Hancom processes.
 For a user who will return later to approve Hancom, use the detached job helper:
 
 ```text
-python <skill-dir>/scripts/export_pdf_job.py start input.hwpx output.pdf export-job
-python <skill-dir>/scripts/export_pdf_job.py status export-job
+python <skill-dir>/scripts/export_pdf_job.py start input.hwpx output.pdf "<report-dir>/export-job"
+python <skill-dir>/scripts/export_pdf_job.py status "<report-dir>/export-job"
 ```
 
 The job runs independently with a 24-hour timeout. The launcher checks for up
@@ -122,7 +139,7 @@ prerequisites are available, or obtain them from the user. Use the same renderer
 fonts, and export settings for both, then run:
 
 ```text
-python <skill-dir>/scripts/compare_pdf.py before.pdf after.pdf --report comparison.json
+python <skill-dir>/scripts/compare_pdf.py before.pdf after.pdf --report "<report-dir>/comparison.json"
 ```
 
 Only this helper requires PyMuPDF (`python -m pip install pymupdf` if needed).

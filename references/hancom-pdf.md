@@ -10,8 +10,23 @@ Install pywin32 in the Python environment running the script if it is absent:
 
 ```text
 python -m pip install pywin32
-python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --timeout 300 --report export.json
+python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --timeout 300 --report "<report-dir>/export.json"
 ```
+
+Use a unique OS temporary directory for routine JSON diagnostics. Create it
+under the same account as the exporter; a PowerShell example is:
+
+```powershell
+$hwpxReports = python -c "import tempfile; print(tempfile.mkdtemp(prefix='hwpx-reports-'))"
+```
+
+Replace `<report-dir>` in commands with that path, or pass
+`--report (Join-Path $hwpxReports 'export.json')` in PowerShell. Use a workspace
+report path when the user or project workflow requires retained evidence.
+The exporter writes a JSON file only when `--report` is supplied; omitting it
+prints JSON to stdout. The comparison helper requires an explicit report path.
+PDF and report staging still occurs beside each destination for atomic
+publication, so a report destined for OS temp is also staged there.
 
 The input must be a valid HWPX ZIP package. Output must be a new `.pdf` path.
 Export prints a JSON result on success or failure. Optional `--report` persists
@@ -80,8 +95,8 @@ Use a detached job when the user wants to return later, click approval, and
 notify the agent in chat:
 
 ```text
-python <skill-dir>/scripts/export_pdf_job.py start input.hwpx output.pdf export-job --timeout 86400 --wait 30
-python <skill-dir>/scripts/export_pdf_job.py status export-job
+python <skill-dir>/scripts/export_pdf_job.py start input.hwpx output.pdf "<report-dir>/export-job" --timeout 86400 --wait 30
+python <skill-dir>/scripts/export_pdf_job.py status "<report-dir>/export-job"
 ```
 
 `export-job` must be a new directory, separate from the output PDF. The defaults
