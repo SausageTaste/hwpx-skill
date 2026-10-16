@@ -28,6 +28,8 @@ class PortabilityTests(unittest.TestCase):
                                         cwd=work, env=env, capture_output=True, text=True)
                 self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
+            run('export_pdf.py', '--help')
+
             package = work / 'source'
             package.mkdir()
             (package / 'mimetype').write_bytes(b'application/hwp+zip')

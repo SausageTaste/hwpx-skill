@@ -1,3 +1,3 @@
 interface:
   display_name: "HWPX"
-  short_description: "Pack, unpack, and safely format HWPX XML"
+  short_description: "Pack, format, and locally export HWPX to PDF"

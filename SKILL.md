@@ -1,6 +1,6 @@
 ---
 name: hwpx
-description: Pack and unpack HWPX documents, indent their XML without changing document text or layout settings, and compare before/after PDF exports. Use for HWPX package maintenance and source formatting, not legacy binary HWP conversion or document content authoring.
+description: Pack and unpack HWPX documents, indent their XML without changing document text or layout settings, export PDFs locally with desktop Hancom on Windows, and compare before/after PDF exports. Use for HWPX package maintenance and source formatting, not legacy binary HWP conversion or document content authoring.
 ---
 
 # HWPX
@@ -8,7 +8,8 @@ description: Pack and unpack HWPX documents, indent their XML without changing d
 Use the bundled Python tools for package operations and conservative XML source
 formatting. Resolve script paths relative to this skill; input and output paths
 belong to the user's workspace. No repository-specific files are required.
-Python 3.10+ is sufficient except for the optional PDF comparison.
+Python 3.10+ is sufficient for packing and XML formatting. Local PDF export
+requires Windows, desktop Hancom, and pywin32; PDF comparison requires PyMuPDF.
 
 ## Pack and unpack
 
@@ -64,11 +65,36 @@ remain byte-identical. Formatting never repairs previously altered document
 text: recover from a verified original only when that recovery is requested and
 newer edits have been accounted for. Do not guess missing spaces or line breaks.
 
+## Export PDF locally on Windows
+
+Use desktop Hancom through its local COM API; document conversion does not use
+Hancom web/server APIs. Read [the export guide](references/hancom-pdf.md) for
+prerequisites, file-access approvals, and recovery from blocked exports.
+
+```text
+python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf
+```
+
+The exporter creates its own COM object, opens the document, calls PDF SaveAs,
+and closes that session. It requires a new output path, stages the PDF before
+publishing, checks the input hash, and enforces a 120-second timeout (adjust with
+`--timeout SECONDS` for large documents). It verifies the PDF signature/end
+marker; use the comparison helper for page rendering verification. It does not
+change document content or install/configure a security module.
+
+An approval dialog can require the user's action. Do not click through security
+prompts or retry indefinitely. A preconfigured, trusted Hancom module can be
+selected explicitly with `--security-module NAME`; never register arbitrary
+modules or edit security settings as part of export. On timeout, report that
+Hancom may remain open and inspect the dialog before retrying. The exporter
+stops its Python worker without killing other Hancom processes.
+
 ## Verify appearance when required
 
 Content preservation and demonstrated visual equivalence are different checks.
-To verify appearance, obtain before/after PDFs exported with the same renderer,
-fonts, and export settings, then run:
+To verify appearance, export before/after PDFs locally when the export
+prerequisites are available, or obtain them from the user. Use the same renderer,
+fonts, and export settings for both, then run:
 
 ```text
 python <skill-dir>/scripts/compare_pdf.py before.pdf after.pdf --report comparison.json
@@ -86,8 +112,8 @@ images, or pagination changes. Matching embedded HWPX preview images, matching
 page counts, or matching extracted text alone do not prove identical appearance.
 When PDFs or a renderer are unavailable, report content verification separately
 and leave visual equivalence unverified. Do not claim universal rendering
-compatibility from one document or renderer. Neither HWPX operations nor this
-helper generates PDF exports.
+compatibility from one document or renderer. The comparison helper does not
+export documents; use the local export operation above when available.
 
 ## Validate the portable tools
 
@@ -95,7 +121,8 @@ helper generates PDF exports.
 python -m unittest discover -s <skill-dir>/tests -t <skill-dir> -v
 ```
 
-Tests use synthetic fixtures and temporary directories. PDF tests require
-PyMuPDF and are skipped when it is unavailable; core archive and XML tests have
-no third-party dependencies. No installation or document-specific authoring
+Tests use synthetic fixtures and temporary directories. Export tests mock
+Hancom and do not launch desktop apps. PDF comparison tests require PyMuPDF and
+are skipped when it is unavailable; core archive and XML tests have no
+third-party dependencies. No installation or document-specific authoring
 workflow is implied by this skill.
