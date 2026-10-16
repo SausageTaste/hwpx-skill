@@ -54,6 +54,8 @@ def run_job(directory):
                             config['timeout_seconds'], config['security_module'])
     except Exception as error:
         status.update(state='failed', error=str(error), finished_utc=now())
+        if getattr(error, 'report', None) is not None:
+            status['result'] = error.report
         write_status(directory, status)
         print(str(error), file=sys.stderr, flush=True)
         return 2

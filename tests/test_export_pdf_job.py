@@ -11,6 +11,7 @@ from unittest.mock import patch
 from zipfile import ZipFile
 
 from export_pdf_job import read_status, run_job, start_job, write_status
+from export_pdf import ExportError
 
 
 class ExportJobTests(unittest.TestCase):
@@ -53,6 +54,14 @@ class ExportJobTests(unittest.TestCase):
         self.assertEqual(result['error'], 'Export timed out')
         self.assertEqual(result['recent_progress'], ['Opening document'])
         self.assertFalse(self.output.exists())
+
+    def test_timeout_preserves_export_diagnostics(self):
+        self.prepare()
+        report = {'state': 'timed_out', 'error': 'deadline exceeded',
+                  'last_stage': 'Creating staging directory', 'account': 'test'}
+        with patch('export_pdf_job.export_pdf', side_effect=ExportError(report)):
+            self.assertEqual(run_job(self.job), 2)
+        self.assertEqual(read_status(self.job)['result'], report)
 
     def test_invalid_options_and_collisions_do_not_launch(self):
         with patch('export_pdf_job.sys.platform', 'win32'), patch('export_pdf_job.subprocess.Popen') as launch:

@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from zipfile import ZipFile
 
-from export_pdf import export_pdf, main, render_with_hancom, run_worker
+from export_pdf import export_pdf, export_in_worker, main, render_with_hancom, run_worker
 from hwpx_archive import MIMETYPE
 
 PDF = b'%PDF-1.4\nsynthetic export test\n%%EOF\n'
@@ -28,10 +28,11 @@ class PdfExportTests(unittest.TestCase):
     def export(self, worker):
         with patch('export_pdf.sys.platform', 'win32'), \
                 patch('export_pdf.importlib.util.find_spec', return_value=object()), \
-                patch('export_pdf.run_worker', side_effect=worker):
-            return export_pdf(self.source, self.output)
+                patch('export_pdf.execution_context', return_value={'account': 'test', 'session_id': 1}), \
+                patch('export_pdf.render_with_hancom', side_effect=worker):
+            return export_in_worker(self.source, self.output)
 
-    def successful_worker(self, source, staged, timeout, module):
+    def successful_worker(self, source, staged, module, progress):
         staged.write_bytes(PDF)
         return {'renderer': 'Hancom', 'renderer_version': 'test'}
 
@@ -48,29 +49,30 @@ class PdfExportTests(unittest.TestCase):
     def test_refuses_existing_output_invalid_package_and_extension(self):
         self.output.write_bytes(b'keep')
         with self.assertRaises(ValueError):
-            export_pdf(self.source, self.output)
+            export_in_worker(self.source, self.output)
         self.assertEqual(self.output.read_bytes(), b'keep')
         with self.assertRaises(ValueError):
-            export_pdf(self.source, self.root / 'output.hwpx')
+            export_in_worker(self.source, self.root / 'output.hwpx')
         invalid = self.root / 'invalid.hwpx'
         with ZipFile(invalid, 'w') as archive:
             archive.writestr('mimetype', b'not HWPX')
         with self.assertRaises(ValueError):
-            export_pdf(invalid, self.root / 'invalid.pdf')
+            export_in_worker(invalid, self.root / 'invalid.pdf')
 
     def test_rejects_unsupported_platform_and_missing_dependency(self):
         with patch('export_pdf.sys.platform', 'linux'):
             with self.assertRaisesRegex(RuntimeError, 'Windows'):
-                export_pdf(self.source, self.output)
+                export_in_worker(self.source, self.output)
         with patch('export_pdf.sys.platform', 'win32'), \
+                patch('export_pdf.execution_context', return_value={}), \
                 patch('export_pdf.importlib.util.find_spec', return_value=None):
             with self.assertRaisesRegex(RuntimeError, 'pywin32'):
-                export_pdf(self.source, self.output)
+                export_in_worker(self.source, self.output)
         self.assertFalse(self.output.exists())
 
     def test_rejects_invalid_pdf_and_worker_failure(self):
         for payload in (b'', b'%PDF-1.4\ntruncated', b'wrong %%EOF'):
-            def worker(source, staged, timeout, module):
+            def worker(source, staged, module, progress):
                 staged.write_bytes(payload)
                 return {}
             with self.subTest(payload=payload), self.assertRaises(RuntimeError):
@@ -111,7 +113,7 @@ class PdfExportTests(unittest.TestCase):
                 run_worker(self.source, self.output, 0.2, None)
             self.assertEqual(run.call_count, 1)
             self.assertIsNotNone(children[0].poll())
-            self.assertIn('staged PDF', progress.getvalue())
+            self.assertEqual(progress.getvalue(), '')
         for value in (0, -1, float('nan'), float('inf')):
             with self.subTest(timeout=value), self.assertRaises(ValueError):
                 export_pdf(self.source, self.output, timeout=value)
@@ -119,14 +121,15 @@ class PdfExportTests(unittest.TestCase):
     def test_worker_forwards_progress_and_preserves_json_stdout(self):
         popen = subprocess.Popen
         script = ('import sys; print("Opening document", file=sys.stderr, flush=True); '
-                  'print(\'{"renderer": "test"}\')')
+                  'print(\'{"renderer": "test", "state": "succeeded"}\')')
         def successful_worker(command, **kwargs):
             self.assertIn('--_worker', command)
             return popen([sys.executable, '-c', script], **kwargs)
         with patch('export_pdf.subprocess.Popen', side_effect=successful_worker), \
                 patch('export_pdf.sys.stderr', new_callable=io.StringIO) as progress:
             result = run_worker(self.source, self.output, 10, None)
-        self.assertEqual(result, {'renderer': 'test'})
+        self.assertEqual(result['renderer'], 'test')
+        self.assertEqual(result['state'], 'succeeded')
         self.assertEqual(progress.getvalue(), 'Opening document\n')
 
     def test_worker_progress_is_visible_before_worker_exits(self):
@@ -135,7 +138,7 @@ class PdfExportTests(unittest.TestCase):
         script = ('import sys, time; from pathlib import Path\n'
                   'print("Opening", file=sys.stderr, flush=True)\n'
                   'while not Path(sys.argv[1]).exists(): time.sleep(0.01)\n'
-                  'print(\'{"renderer": "test"}\')\n')
+                  'print(\'{"renderer": "test", "state": "succeeded"}\')\n')
         class Progress(io.StringIO):
             def write(self, value):
                 if 'Opening' in value:
@@ -146,12 +149,13 @@ class PdfExportTests(unittest.TestCase):
         with patch('export_pdf.subprocess.Popen', side_effect=waiting_worker), \
                 patch('export_pdf.sys.stderr', new_callable=Progress) as progress:
             result = run_worker(self.source, self.output, 10, None)
-        self.assertEqual(result, {'renderer': 'test'})
+        self.assertEqual(result['renderer'], 'test')
+        self.assertEqual(result['state'], 'succeeded')
         self.assertEqual(progress.getvalue().count('Opening'), 1)
         self.assertTrue(marker.exists())
 
-    def test_copy_failure_removes_partial_output(self):
-        with patch('export_pdf.shutil.copyfileobj', side_effect=OSError('copy failed')):
+    def test_publication_failure_leaves_no_partial_output(self):
+        with patch('export_pdf.publish_new', side_effect=OSError('publication failed')):
             with self.assertRaises(OSError):
                 self.export(self.successful_worker)
         self.assertFalse(self.output.exists())
@@ -201,9 +205,7 @@ class PdfExportTests(unittest.TestCase):
 
     def test_cli_reports_failure(self):
         with patch('export_pdf.export_pdf', side_effect=RuntimeError('Hancom unavailable')):
-            with self.assertRaises(SystemExit) as result:
-                main([str(self.source), str(self.output)])
-        self.assertEqual(result.exception.code, 2)
+            self.assertEqual(main([str(self.source), str(self.output)]), 2)
 
 
 if __name__ == '__main__':
