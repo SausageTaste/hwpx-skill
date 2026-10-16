@@ -10,13 +10,22 @@ Install pywin32 in the Python environment running the script if it is absent:
 
 ```text
 python -m pip install pywin32
-python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --timeout 180
+python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf --timeout 300
 ```
 
 The input must be a valid HWPX ZIP package. Output must be a new `.pdf` path.
 Successful export prints JSON containing renderer version, source/output hashes,
 byte count, and preservation checks. Exit 0 means export completed; exit 2 means
 an error. Export success alone does not establish visual equivalence.
+
+The default limit is 300 seconds for the entire worker, including opening,
+rendering, and closing. Waiting for file-access consent also uses this time.
+Large documents can take more than 45 seconds even when
+export is working. Progress goes to stderr: the current stage and, every 15
+seconds while waiting, elapsed time and the staged PDF size. A growing file is
+evidence of progress; no growth alone does not prove the app is blocked. JSON
+on stdout remains machine-readable and includes total elapsed time. Increase
+`--timeout` for slower machines or larger documents.
 
 ## File-access approvals
 
@@ -42,9 +51,11 @@ perform module installation as part of an ordinary export request.
 
 - If COM activation fails, verify desktop Hancom is installed, activated, and
   usable interactively. A viewer-only installation may not provide automation.
-- On timeout, the Python worker stops. Its Hancom session may remain open; a
-  locked staging directory may also remain. Do not terminate unrelated Hancom
-  processes. Inspect the app's state before one informed retry.
+- On timeout, the Python worker stops. Hancom may still be rendering; timeout
+  alone does not diagnose a dialog or failed conversion. The error includes
+  the last stage and staging path. A locked staging directory may remain.
+  Do not terminate unrelated Hancom processes. Inspect the app's state and
+  allow an ongoing export to finish before retrying with a longer limit.
 - A failed export does not publish a final PDF. Handled copy failures remove the
   newly created partial output. A force-killed process or power loss can still
   leave temporary/partial files; inspect them before reusing an output path.

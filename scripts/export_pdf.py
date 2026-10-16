@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -82,25 +84,64 @@ def run_worker(source, output, timeout, security_module):
         command.extend(['--security-module', security_module])
     env = os.environ.copy()
     env['PYTHONIOENCODING'] = 'utf-8'
-    try:
-        result = subprocess.run(command, capture_output=True, text=True,
-                                encoding='utf-8', env=env, timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        progress = error.stderr or ''
-        if isinstance(progress, bytes):
-            progress = progress.decode('utf-8', errors='replace')
-        last_stage = progress.strip().splitlines()[-1] if progress.strip() else 'No worker progress received'
-        raise RuntimeError(
-            'Hancom export timed out; the Python worker was stopped. Hancom may '
-            'remain open. Check for a file-access or error dialog before retrying; '
-            f'other Hancom processes were not terminated. Last stage: {last_stage}') from error
-    if result.returncode:
-        detail = result.stderr.strip() or result.stdout.strip()
+    started = time.monotonic()
+    progress = []
+
+    def forward(stream):
+        # communicate(timeout=...) buffers stderr until EOF on Windows.
+        # Read lines independently so stages remain visible during COM calls.
+        for line in stream:
+            progress.append(line)
+            print(line, end='', file=sys.stderr, flush=True)
+
+    with tempfile.TemporaryFile() as result_file, \
+            subprocess.Popen(command, stdout=result_file, stderr=subprocess.PIPE,
+                             text=True, encoding='utf-8', env=env) as process:
+        reader = threading.Thread(target=forward, args=(process.stderr,), daemon=True)
+        reader.start()
+        try:
+            while True:
+                remaining = timeout - (time.monotonic() - started)
+                try:
+                    process.wait(timeout=max(0, min(15, remaining)))
+                    break
+                except subprocess.TimeoutExpired as error:
+                    elapsed = time.monotonic() - started
+                    size = output.stat().st_size if output.exists() else 0
+                    print(f'Hancom export running: {elapsed:.0f}s elapsed; '
+                          f'staged PDF {size:,} bytes', file=sys.stderr, flush=True)
+                    if elapsed >= timeout:
+                        process.kill()
+                        process.wait()
+                        reader.join()
+                        last_stage = (progress[-1].strip() if progress
+                                      else 'No worker progress received')
+                        raise RuntimeError(
+                            f'Hancom exceeded the {timeout:g}s time limit; this does not '
+                            'necessarily mean conversion stalled. The Python worker was '
+                            'stopped, but Hancom may still be rendering. Inspect its state '
+                            'before retrying with a larger --timeout. Other Hancom '
+                            f'processes were not terminated. Last stage: {last_stage}. '
+                            f'Staging path: {output}') from error
+        except BaseException:
+            # Also bound cleanup on interruption or an unexpected monitoring error.
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            raise
+        finally:
+            reader.join()
+        result_file.seek(0)
+        stdout = result_file.read().decode('utf-8')
+    stderr = ''.join(progress)
+    if process.returncode:
+        detail = stderr.strip() or stdout.strip()
         raise RuntimeError(f'Hancom export failed: {detail}')
-    return json.loads(result.stdout)
+    return json.loads(stdout)
 
 
-def export_pdf(source, output, timeout=120, security_module=None):
+def export_pdf(source, output, timeout=300, security_module=None):
+    started = time.monotonic()
     source, output = validate_paths(source, output)
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError('Timeout must be a positive finite number of seconds')
@@ -136,6 +177,7 @@ def export_pdf(source, output, timeout=120, security_module=None):
     return {**renderer, 'source': str(source), 'output': str(output),
             'source_sha256': before_hash, 'output_sha256': file_hash(output),
             'output_bytes': output.stat().st_size, 'source_unchanged': True,
+            'elapsed_seconds': round(time.monotonic() - started, 2),
             'pdf_signature_verified': True, 'visual_equivalence_verified': False}
 
 
@@ -143,7 +185,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path, help='New .pdf output path')
-    parser.add_argument('--timeout', type=float, default=120, help='Export timeout in seconds (default: 120)')
+    parser.add_argument('--timeout', type=float, default=300, help='Export timeout in seconds (default: 300)')
     parser.add_argument('--security-module', help='Name of an already installed Hancom approval module')
     parser.add_argument('--_worker', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)

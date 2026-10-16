@@ -77,16 +77,18 @@ python <skill-dir>/scripts/export_pdf.py input.hwpx output.pdf
 
 The exporter creates its own COM object, opens the document, calls PDF SaveAs,
 and closes that session. It requires a new output path, stages the PDF before
-publishing, checks the input hash, and enforces a 120-second timeout (adjust with
+publishing, checks the input hash, and enforces a 300-second timeout (adjust with
 `--timeout SECONDS` for large documents). It verifies the PDF signature/end
 marker; use the comparison helper for page rendering verification. It does not
-change document content or install/configure a security module.
+change document content or install/configure a security module. Stage messages,
+elapsed time, and staged PDF size appear on stderr; the result JSON uses stdout.
 
 An approval dialog can require the user's action. Do not click through security
 prompts or retry indefinitely. A preconfigured, trusted Hancom module can be
 selected explicitly with `--security-module NAME`; never register arbitrary
 modules or edit security settings as part of export. On timeout, report that
-Hancom may remain open and inspect the dialog before retrying. The exporter
+Hancom may still be rendering and inspect its state before retrying with a longer
+limit. A timeout does not by itself prove export failure or a dialog. The exporter
 stops its Python worker without killing other Hancom processes.
 
 ## Verify appearance when required
@@ -122,7 +124,8 @@ python -m unittest discover -s <skill-dir>/tests -t <skill-dir> -v
 ```
 
 Tests use synthetic fixtures and temporary directories. Export tests mock
-Hancom and do not launch desktop apps. PDF comparison tests require PyMuPDF and
+Hancom and exercise worker supervision with Python subprocesses; they do not
+launch desktop apps. PDF comparison tests require PyMuPDF and
 are skipped when it is unavailable; core archive and XML tests have no
 third-party dependencies. No installation or document-specific authoring
 workflow is implied by this skill.

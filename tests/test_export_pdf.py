@@ -1,5 +1,7 @@
 """Export orchestration tests never launch a desktop app."""
 import subprocess
+import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -97,13 +99,56 @@ class PdfExportTests(unittest.TestCase):
         self.assertEqual(self.output.read_bytes(), b'user output')
 
     def test_timeout_has_clear_error_and_no_automatic_retry(self):
-        with patch('export_pdf.subprocess.run', side_effect=subprocess.TimeoutExpired('worker', 1)) as run:
-            with self.assertRaisesRegex(RuntimeError, 'timed out'):
-                run_worker(self.source, self.output, 1, None)
+        popen = subprocess.Popen
+        children = []
+        def sleeping_worker(command, **kwargs):
+            child = popen([sys.executable, '-c', 'import time; time.sleep(60)'], **kwargs)
+            children.append(child)
+            return child
+        with patch('export_pdf.subprocess.Popen', side_effect=sleeping_worker) as run, \
+                patch('export_pdf.sys.stderr', new_callable=io.StringIO) as progress:
+            with self.assertRaisesRegex(RuntimeError, 'may still be rendering'):
+                run_worker(self.source, self.output, 0.2, None)
             self.assertEqual(run.call_count, 1)
+            self.assertIsNotNone(children[0].poll())
+            self.assertIn('staged PDF', progress.getvalue())
         for value in (0, -1, float('nan'), float('inf')):
             with self.subTest(timeout=value), self.assertRaises(ValueError):
                 export_pdf(self.source, self.output, timeout=value)
+
+    def test_worker_forwards_progress_and_preserves_json_stdout(self):
+        popen = subprocess.Popen
+        script = ('import sys; print("Opening document", file=sys.stderr, flush=True); '
+                  'print(\'{"renderer": "test"}\')')
+        def successful_worker(command, **kwargs):
+            self.assertIn('--_worker', command)
+            return popen([sys.executable, '-c', script], **kwargs)
+        with patch('export_pdf.subprocess.Popen', side_effect=successful_worker), \
+                patch('export_pdf.sys.stderr', new_callable=io.StringIO) as progress:
+            result = run_worker(self.source, self.output, 10, None)
+        self.assertEqual(result, {'renderer': 'test'})
+        self.assertEqual(progress.getvalue(), 'Opening document\n')
+
+    def test_worker_progress_is_visible_before_worker_exits(self):
+        popen = subprocess.Popen
+        marker = self.root / 'progress-seen'
+        script = ('import sys, time; from pathlib import Path\n'
+                  'print("Opening", file=sys.stderr, flush=True)\n'
+                  'while not Path(sys.argv[1]).exists(): time.sleep(0.01)\n'
+                  'print(\'{"renderer": "test"}\')\n')
+        class Progress(io.StringIO):
+            def write(self, value):
+                if 'Opening' in value:
+                    marker.touch()
+                return super().write(value)
+        def waiting_worker(command, **kwargs):
+            return popen([sys.executable, '-c', script, str(marker)], **kwargs)
+        with patch('export_pdf.subprocess.Popen', side_effect=waiting_worker), \
+                patch('export_pdf.sys.stderr', new_callable=Progress) as progress:
+            result = run_worker(self.source, self.output, 10, None)
+        self.assertEqual(result, {'renderer': 'test'})
+        self.assertEqual(progress.getvalue().count('Opening'), 1)
+        self.assertTrue(marker.exists())
 
     def test_copy_failure_removes_partial_output(self):
         with patch('export_pdf.shutil.copyfileobj', side_effect=OSError('copy failed')):
